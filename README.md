@@ -18,5 +18,6 @@ Contents:
 
 Modifications to the SPCAM source code (original found here: https://wiki.ucar.edu/pages/viewpage.action?pageId=205489281) are not included, but can be shared upon request. 
 
-Zenodo repository here: ![image](https://github.com/sweidy/predict_MJO_SPCAM/assets/93666840/fbc1df7f-fd65-4a43-b365-7b3b4a9db5a9)
+Zenodo repository here: <a href="https://zenodo.org/badge/latestdoi/670349005"><img src="https://zenodo.org/badge/670349005.svg" alt="DOI"></a>
+
 
