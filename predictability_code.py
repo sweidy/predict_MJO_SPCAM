@@ -1,6 +1,13 @@
 # functions for calculating the real-time OMI of OLR model data
 # based of ROMI from Kiladis, 2014 with similar filtering to Kikuchi 2012
-# .90 correlation to OMI
+
+# Requires the mjoindices package from https://github.com/cghoffmann/mjoindices; some of the functions
+# to calculate the ROMI are modified from the functions for OMI in the package. A companion paper to the
+# package can be found at:
+# Hoffmann, C.G., Kiladis, G.N., Gehne, M. and von Savigny, C., 2021. 
+# A Python Package to Calculate the OLR-Based Index of the Madden- Julian-Oscillation (OMI) 
+# in Climate Science and Weather Forecasting. Journal of Open Research Software, 9(1), p.9. 
+# DOI: http://doi.org/10.5334/jors.331
 
 from pathlib import Path
 import os.path
@@ -9,14 +16,12 @@ import inspect
 import numpy as np
 import pandas as pd
 import xarray as xr
+from scipy import stats
 
-import mjoanalyses.general_mjo_tools as tools
 import mjoindices.tools as mjotools
 import mjoindices.omi.omi_calculator as omi
 import mjoindices.principal_components as pc
 import mjoindices.empirical_orthogonal_functions as eof
-import MJO_indices.mjo_input_tools as input_tools
-
 
 def concat_full_runs(control, restart, restart_date, prev_window=50):
     """
@@ -140,12 +145,35 @@ def romi_regress_3dim_data_onto_eofs(data: object, eofdata: eof.EOFDataForAllDOY
     return pc.PCData(data.time, pc1, pc2)
 
 
+def split_time_into_components_xr(data: xr.DataArray) -> xr.DataArray:
+    """
+    Splits time of xr DataArray into yy, mm, dd
+    
+    :param data: xr DataArray with dimensions [time, space]
+    
+    :returns: xr DataArray with dimensions [time, space, year, month, day]
+    """
+    
+    vtimes = data.time.values.astype('datetime64[ms]').astype('O')
+
+    yy = [i.year for i in vtimes]
+    mm = [i.month for i in vtimes]
+    dd = [i.day for i in vtimes]
+
+    # add new coordinates to DataArray
+    data = data.assign_coords(year=('time',yy),
+                     month=('time',mm),
+                     day=('time',dd))
+    
+    return data
+
+
 def generate_dates_restart(raw_olr):
     """
     Generate array of valid dates from OLR dataset. Needed because model dates are weird and pandas hates them. 
     """
 
-    comp = tools.split_time_into_components_xr(raw_olr)
+    comp = split_time_into_components_xr(raw_olr)
     years = comp.year.values
     mons = comp.month.values
     days = comp.day.values
@@ -153,6 +181,45 @@ def generate_dates_restart(raw_olr):
     times = [np.datetime64(f'{years[i]:04d}' + '-' + f'{mons[i]:02d}' + '-' + f'{days[i]:02d}') for i in range(len(comp))]
     
     return np.array(times, dtype=np.datetime64)
+
+
+def calculate_phase(pc1: int, pc2: int) -> int:
+    """
+    Calculates phase of the MJO based on PC1 and PC2 of the OMI.
+
+    :param pc1: integer of PC1 for some date
+    :param pc2: integer of PC2 for same date
+
+    :returns: integer phase number based on angle between PC1,PC2
+    """
+    
+    if np.abs(pc1) >= np.abs(pc2):
+        
+        if pc1 >= 0:
+            if pc2 >= 0:
+                phase = 3
+            else: # pc2 < 0
+                phase = 2
+        else: # pc1 < 0
+            if pc2 >= 0:
+                phase = 6
+            else: # pc2 < 0
+                phase = 7
+                
+    else: # pc2 > pc1
+        
+        if pc1 >= 0:
+            if pc2 >= 0:
+                phase = 4
+            else: # pc2 < 0
+                phase = 1
+        else: # pc1 < 0
+            if pc2 >= 0:
+                phase = 5
+            else: # pc2 < 0
+                phase = 8
+                
+    return phase
 
 
 def sort_pcs_pd(pcs_obj, olrdata):
@@ -168,7 +235,7 @@ def sort_pcs_pd(pcs_obj, olrdata):
     
     # calculate tangent for phase
     pcs['Theta'] = np.arctan(-pcs.PC1/pcs.PC2)
-    pcs['Phase'] = [tools.calculate_phase(pc1,pc2) for pc1,pc2 in zip(pcs.PC1,pcs.PC2)]
+    pcs['Phase'] = [calculate_phase(pc1,pc2) for pc1,pc2 in zip(pcs.PC1,pcs.PC2)]
 
     pcs['time'] = olrdata.time
     pcs = pcs.set_index('time')
@@ -179,6 +246,38 @@ def sort_pcs_pd(pcs_obj, olrdata):
         olrdata[col] = pcs[col].to_xarray()
 
     return olrdata
+
+
+def interpolate_spacial_grid_xr(data: xr.DataArray, target_lat: np.ndarray, target_long: np.ndarray,
+                                bounds_error: bool=True) -> xr.DataArray:
+    """
+    Interpolates the OLR data linearly onto the given grids.
+    No extrapolation will be done if bounds_error = True. Instead a :py:class:`ValueError` is raised 
+    if the data does not cover the target grid.
+    
+    :param data: The data to interpolate
+    :param target_lat: The new latitude grid.
+    :param target_long: The new longitude grid.
+    :param bounds_error: if True, will raise error instead of extrapolating. if False, will extrapolate at boundaries.
+    Use bounds_error=False carefully. 
+    :return: interpolated data in xarray form
+    """
+    
+    no_days = data.time.size
+    data_interp = np.empty((no_days, target_lat.size, target_long.size))
+    
+    for idx, t in enumerate(data.time.values):
+        f = scipy.interpolate.interp2d(data.lon.values, data.lat.values, data.sel(time=t).values,
+                                       kind='linear', bounds_error=bounds_error) 
+        #temp = f(target_long, target_lat) 
+        #data_interp[idx, :, :] = np.flip(temp, axis=0) # TODO: is this required?? 
+        data_interp[idx, :, :] = f(target_long, target_lat)
+
+    # put back in xarray
+    return xr.DataArray(data_interp, coords={'lat': target_lat,
+                                             'lon': target_long,
+                                             'time': data['time'].values},
+                        dims=['time','lat','lon']) 
 
 
 def process_romi_data(raw_olr, eofdata, seasonal_cycle, low_window=40, smooth_window=9, norm_factor=0.004):
@@ -207,7 +306,7 @@ def process_romi_data(raw_olr, eofdata, seasonal_cycle, low_window=40, smooth_wi
     filt2 = take_running_mean(filt1, smooth_window)
 
     # interpolate to standard EOF grid
-    interp_olr = tools.interpolate_spacial_grid_xr(filt2, eofdata.lat, eofdata.long)
+    interp_olr = interpolate_spacial_grid_xr(filt2, eofdata.lat, eofdata.long)
 
     # projects filtered OLR onto EOFs
     olr_dates = generate_dates_restart(interp_olr)
@@ -217,52 +316,9 @@ def process_romi_data(raw_olr, eofdata, seasonal_cycle, low_window=40, smooth_wi
     return sort_pcs_pd(pcs_obj, interp_olr)
 
 
-def iterate_romi(restart_dates, ndates, omi_eofs, daily_aves):
-    """
-    Envelope function for calculating the ROMI for a list of restart dates.
-
-    :param restart_dates: list of dates for calculating ROMI.
-    :param ndates: index corresponding to restart dates 
-    :param omi_eofs: EOFs used for projecting the ROMI PCs.
-    :param daily_aves: climatology dataset used for finding the OLR anomaly
-
-    :returns: list of ROMI values for each restart date, for forecast and corresponding control run.
-    """
-    
-    control_romi = []
-    restart_romi = []
-    
-    for d in ndates:
-        date = restart_dates[d]
-        print(date)
-        
-        restart_path = Path(os.path.abspath('')).parents[0] / 'cesm_output' / f'twin_restart_{date}' / 'atm' / 'hist' 
-        restart_olr = tools.load_data_xr(restart_path / f'twin_restart_{date}.FLUT.nc', 'FLUT', decode_times=True)
-        
-        control_run, twin_run = romi.concat_full_runs(control_olr, restart_olr, date)
-        
-        control_romi.append(romi.process_romi_data(control_run, omi_eofs, daily_aves))
-        restart_romi.append(romi.process_romi_data(twin_run, omi_eofs, daily_aves))
-        
-    return control_romi, restart_romi
-
-
 #######################################
-# below is more for analyzing ROMI and calculating prediction skill
-
-def iterate_restart_dates(output_path):
-    """
-    Find dates corresponding to restart cases in cesm_output folder.
-
-    :param output_path: Path object where restart cases are stored
-    
-    :returns: list of strings of dates, sorted by time, in form "YYYY-MM-DD"
-    """
-    
-    dates = [x.parts[-1][-10:] for x in output_path.iterdir() if x.is_dir() and "twin_restart" in x.parts[-1]]
-    dates.sort()
-    return dates
-
+# below are functions used to analyze the pre-calculated ROMI for reproducing figures of the paper.
+####################################### 
 
 def deleteLeadingZeros(inputString):
     """
@@ -280,16 +336,13 @@ def deleteLeadingZeros(inputString):
     return "0"
 
 
-def split_restarts_by_phase(restart_dates, output_path, threshold=1.14, threshold_window=0):
+def split_restarts_by_phase_initial(ROMI_data, threshold=1.14):
     """
     Separate restart dates by phase and activity. Can adjust thresholding for active MJOs.
 
-    :param restart_dates: total list of restarts to sort
-    :param output_path: Path object to restart directory
-    :param threshold: integer of ROMI amplitude to use for active MJO events. Default = 1.
-    :param threshold_window: number of days before and and after restart date to use for determining
-    whether an MJO event is active or not. Default is 2 days, meaning we use a 5-day window with an 
-    average amplitude above :param threshold: to classify the event as active. 
+    :param ROMI_data: xrDataset containing ROMI data for each forecast run.
+    :param threshold: integer of ROMI amplitude to use for active MJO events. Default = 1.14, the median 
+    amplitude over the 20-year control run.
 
     :returns: list of lists for all events, sorted into 8 phases, and active events, sorted into 8 phases. 
     Length of list = 8, where each element corresponds to the dates in that phase. 
@@ -298,86 +351,50 @@ def split_restarts_by_phase(restart_dates, output_path, threshold=1.14, threshol
     sorted_phase = [ [] for _ in range(8) ]
     sorted_act = [ [] for _ in range(8) ]
 
-    for idx,r in enumerate(restart_dates):
-        control = xr.open_dataarray(output_path / f'twin_restart_{r}/atm/hist/romi_control_{r}.nc')
-
-        idx_restart = 6 # index of forecast start for the way I save ROMI.
-
+    for idx in range(len(ROMI_data.nruns)):
+        
         # find phase at restart date
-        phase_n = int(control[idx_restart].Phase.values) - 1
-        sorted_phase[phase_n].append(r)
+        phase_n = int(ROMI_data.Phase.sel(nruns=idx,leadlag=0)) - 1
+        sorted_phase[phase_n].append(str(ROMI_data.restart_date.sel(nruns=idx).values))
         # determine if restart date is during an active MJO
-        if np.mean(control[idx_restart-threshold_window:idx_restart+threshold_window+1].Amplitude) > threshold:
-            sorted_act[phase_n].append(r)
+        if np.mean(ROMI_data.Amplitude.sel(nruns=idx, leadlag=0) > threshold):
+            sorted_act[phase_n].append(str(ROMI_data.restart_date.sel(nruns=idx).values))
 
     return sorted_phase, sorted_act
 
 
-def combine_all_romi_data(restart_dates, output_path, lenrun=67):
+def slice_ROMI_data(ROMI_data, slice_dates):
     """
-    Separate each target date by phase and activity, based on control run. 
-    Stick all information for control and restart into one array, aligned by lead/lag day
+    slice the full ROMI dataset and select only data from specified dates in slice_dates
+    used for doing calculations only with initial active/inactive/phase forecasts.
+
+    :param ROMI_data: xrDataset containing ROMI data for each forecast run.
+    :param slice_dates: list of forecast dates to restrict the dataset into 
+
+    :returns: xrDataset with all the same information as ROMI_data, but with only the forecast information
+    from the specified dates.
     """
 
-    #leadlag = lenrun 
-    leadlag = np.arange(-6,61)
-    nruns = len(restart_dates)
+    ROMI_slice = ROMI_data.sel(nruns = ROMI_data.nruns.loc[[r in slice_dates for r in ROMI_data.restart_date.values]])
 
-    romi1c = np.empty([lenrun,nruns])
-    romi2c = np.empty([lenrun,nruns])
-    romi1f = np.empty([lenrun,nruns])
-    romi2f = np.empty([lenrun,nruns])
-    phasec = np.empty([lenrun,nruns])
-    ampc = np.empty([lenrun,nruns])
-    restart_date = np.empty([nruns])
-
-    for idx,r in enumerate(restart_dates):
-        control = xr.open_dataarray(output_path / f'twin_restart_{r}/atm/hist/romi_control_{r}.nc')
-        restart = xr.open_dataarray(output_path / f'twin_restart_{r}/atm/hist/romi_twin_{r}.nc')
-
-        idx_restart = 0 # index of forecast start for the way I save ROMI.
-
-        # add information to each array
-        romi1c[:,idx] = control[idx_restart:].PC1
-        romi2c[:,idx] = control[idx_restart:].PC2
-        romi1f[:,idx] = restart[idx_restart:].PC1
-        romi2f[:,idx] = restart[idx_restart:].PC2
-        phasec[:,idx] = control[idx_restart:].Phase
-        ampc[:,idx] = control[idx_restart:].Amplitude
+    # reset the number of forecast runs to the smaller slice
+    return ROMI_slice.assign_coords(nruns = np.arange(0,len(slice_dates)))
 
 
-    return xr.Dataset(data_vars=dict(
-                            ROMI1C=(['leadlag', 'nruns'],romi1c),
-                            ROMI2C=(['leadlag', 'nruns'],romi2c),
-                            ROMI1F=(['leadlag', 'nruns'],romi1f),
-                            ROMI2F=(['leadlag', 'nruns'],romi2f),
-                            Phase=(['leadlag', 'nruns'],phasec),
-                            Amplitude=(['leadlag', 'nruns'],ampc),
-                                    ),
-                      coords=dict(
-                            leadlag=leadlag,
-                            nruns=range(nruns),
-                            restart_date=("nruns",restart_dates)
-                      ))
-
-
-def calculate_bicor_rmse_target(restart_dates, pcs_omi, output_path, threshold=1.14):
+def calculate_bicor_rmse_target(ROMI_data, pcs_omi, threshold=1.14):
 
     """
     Calculate bivariate ACC and RMSE for all forecast runs, as well as by phase and MJO strength,
     based on the given threshold. Separates by target phase and strength. 
 
-    :param restart_dates: list of restart dates to use for calculating ACC/RMSE
+    :param ROMI_data: xrDataset containing ROMI data for each forecast run.
     :param pcs_omi: pandas dataframe of pre-calculated OMI values for the control run, used to 
     separate target dates by phase / MJO strength.
-    :param output_path: string where restart and control runs are located
     :param threshold: OMI amplitude threshold for separating target dates into strong and weak.
 
     :returns: xarray of ACC/RMSE for each lag day, split into all events, strong/weak targets, and
     each target phase (also by strong/weak/all events).
     """
-
-    omi_idx = pcs_omi.set_index('Date')
 
     lag = np.arange(0,-61,-1)
     phase = np.arange(0,9) # 0 index is for all phases
@@ -391,22 +408,22 @@ def calculate_bicor_rmse_target(restart_dates, pcs_omi, output_path, threshold=1
     #       4: mse
     #       5: nforecasts
 
-    for r in restart_dates:
-        control = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_control_{r}.nc')
-        restart = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_twin_{r}.nc')
+    #for r in ROMI_data.restart_date.values:
+    for n in ROMI_data.nruns.values:
 
-        # get OMI info for restart_date: 
-        omi_slice = omi_idx[deleteLeadingZeros(r):deleteLeadingZeros(control.time.values[-1].strftime(format="%Y-%m-%d"))][['Phase','Amplitude']]
+        r = ROMI_data.restart_date.values[n]
+        # get OMI info for restart_date:
+        omi_idx = pcs_omi.index[pcs_omi['Date'] == deleteLeadingZeros(r)].tolist()[0]
+        omi_slice = pcs_omi[omi_idx:omi_idx+len(lag)][['Phase','Amplitude']].reset_index()
 
         for idx in range(len(lag)):
             # for calculating ACC
-            d = idx+6 # for aligning to day 0
-            num = control[d].PC1*restart[d].PC1 + control[d].PC2*restart[d].PC2
-            den1 = control[d].PC1**2 + control[d].PC2**2
-            den2 = restart[d].PC1**2 + restart[d].PC2**2
+            num = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
+            den1 = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
+            den2 = float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
             
             # MSE
-            mse = (control[d].PC1 - restart[d].PC1)**2 + (control[d].PC2 - restart[d].PC2)**2
+            mse = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
 
             # load in proper data: [0,2,:,:] includes all info
             # also add to phase, amplitude, and both indices based on OMI
@@ -428,26 +445,24 @@ def calculate_bicor_rmse_target(restart_dates, pcs_omi, output_path, threshold=1
                                 "lag": lag})
 
 
-def calculate_bicor_rmse(restart_dates, output_path = '/n/home04/sweidman/cesm_output/'):
+def calculate_bicor_rmse_initial(ROMI_data):
     """
-    Calculate the bivariate correlation (ACC) and RMSE across forecast runs. Takes a long time
-    since needs to load pre-calculated ROMI for each forecast and sums together. 
+    Calculate the bivariate correlation (ACC) and RMSE across forecast runs for all dates provided. To restrict the calculations to 
+    a specific set of dates (such as active or inactive dates), use :func slice_ROMI_data():
 
-    :param restart_dates: range of restarts used for calculating ACC and RMSE
-    :param output_path: path to restart directory, string.
+    :param ROMI_data: xrDataset containing ROMI data for each forecast run.
 
     :returns: np.array of ACC and RMSE by day after forecast initiation. Array of size [forecast length,2].
     First column is for ACC, second column is RMSE. 
     """
     
-    temp = xr.open_dataarray(output_path + f'twin_restart_{restart_dates[0]}/atm/hist/romi_control_{restart_dates[0]}.nc')
-    len_run = len(temp.time)
-    n_forecasts = len(restart_dates)
+    len_run = ROMI_data.leadlag.values[-1]+1
+    n_forecasts = len(ROMI_data.nruns)
     print('N forecasts: ', n_forecasts)
     
     error_by_day = np.empty([len_run,2])
     
-    for d in range(len_run):
+    for idx in range(len_run):
         
         num = 0 # numerator of ACC(t)
         den1 = 0 # denominator of PC1 of ACC(t)
@@ -456,69 +471,32 @@ def calculate_bicor_rmse(restart_dates, output_path = '/n/home04/sweidman/cesm_o
         mse = 0 # cumulative sum of mse
         
         # sums over each forecast at lag d from forecast start. 
-        for r in restart_dates:
-            
-            # reload in each control and restart run
-            control = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_control_{r}.nc')
-            restart = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_twin_{r}.nc')
+        for n in ROMI_data.nruns.values:
 
             # for calculating ACC
-            num += control[d].PC1*restart[d].PC1 + control[d].PC2*restart[d].PC2
-            den1 += control[d].PC1**2 + control[d].PC2**2
-            den2 += restart[d].PC1**2 + restart[d].PC2**2
+            num = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
+            den1 = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
+            den2 = float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
             
             # MSE
-            mse += (control[d].PC1 - restart[d].PC1)**2 + (control[d].PC2 - restart[d].PC2)**2
+            mse = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
             
-        error_by_day[d,0] = num/(np.sqrt(den1)*np.sqrt(den2))
-        error_by_day[d,1] = np.sqrt(mse/n_forecasts) 
+        error_by_day[idx,0] = num/(np.sqrt(den1)*np.sqrt(den2))
+        error_by_day[idx,1] = np.sqrt(mse/n_forecasts) 
 
     # Print where MJO is considered predictable by ACC > 0.5
-    print("Correlation < 0.5 at day:", np.where(error_by_day[:,0] < .5)[0][0] - 6)
+    print("Correlation < 0.5 at day:", np.where(error_by_day[:,0] < .5)[0][0])
         
     return np.array(error_by_day)
 
 
-def calculate_extended_romi(full_control, restart_date, omi_eofs, long_freq):
-    """
-    Recalculate ROMI for longer period for the signal to noise ratio. 
-
-    :param full_control: OLR data for full control simulation
-    :param restart_date: date of forecast start
-    :param omi_eofs: EOFdata used for projecting OLR to find PCs
-    :param long_freq: dataset with climatology / seasonal cycle for finding anomaly. 
-
-    :returns: ROMI for control run corresponding to restart date with longer previous window. 
-    """
-    
-    # find required start and end of simulation based on restart date
-    control_start = xr.cftime_range(end=restart_date, 
-                                    freq='1D', 
-                                    periods=68, 
-                                    calendar='noleap')[0]
-    
-    control_end_time = xr.cftime_range(start=restart_date, 
-                                    freq='1D', 
-                                    periods=86, 
-                                    calendar='noleap')[-1]
-        
-    control_slice = full_control.sel(time = slice(control_start,control_end_time))
-    
-    # recalculate ROMI
-    new_romi = process_romi_data(control_slice, omi_eofs, long_freq)
-    
-    return new_romi
-
-def signal_noise_ratio(restart_dates, control_olr, omi_eofs, long_freq, L=25, output_path='/n/home04/sweidman/cesm_output/'):
+def signal_noise_ratio(ROMI_data, L=25):
     """
     Calculate signal and MSE for each forecast. Required recalculating ROMI for the control
     simulation since signal requires a longer prior window. Signal is calculated for the control
     simulation but should not be significantly different from the forecasts. 
 
-    :param restart_dates: list of restart dates for calculating SNR
-    :param control_olr: OLR data for full control simulation
-    :param omi_eofs: EOFdata used for projecting OLR to find PCs 
-    :param long_freq: dataset with climatology / seasonal cycle for finding anomaly
+    :param ROMI_data: xrDataset containing ROMI data for each forecast run. 
     :param L: window used for calculating signal. Using 51-day window because of previous literature. 
     If this changes, will need to change hardcoded indexing below. 
 
@@ -526,37 +504,24 @@ def signal_noise_ratio(restart_dates, control_olr, omi_eofs, long_freq, L=25, ou
     [length of forecast, number of forecasts]
     """
     
-    temp = xr.open_dataarray(output_path + f'twin_restart_{restart_dates[0]}/atm/hist/romi_control_{restart_dates[0]}.nc')
-    len_run = len(temp.time)
-    n_forecasts = len(restart_dates)
+    len_run = ROMI_data.leadlag.values[-1]+1
+    n_forecasts = len(ROMI_data.nruns)
     print('N forecasts: ', n_forecasts)
     count = 0
     
     mse = np.zeros([len_run, n_forecasts])
     signal = np.zeros([len_run, n_forecasts])
     
-    for r in restart_dates:
-        
-        print(r)
-    
-        control = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_control_{r}.nc')
-        restart = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_twin_{r}.nc')
-
-        # Change here if you want to use observed EOFs for calculating ROMI.  
-        #control = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_obs_control_{r}.nc')
-        #restart = xr.open_dataarray(output_path + f'twin_restart_{r}/atm/hist/romi_obs_twin_{r}.nc') 
-
-        # calculate ROMI with longer prior window
-        new_romi = calculate_extended_romi(control_olr, r, omi_eofs, long_freq)
-        
-        for d in range(len_run):
+    for n in ROMI_data.nruns.values:
+        for idx in range(len_run):
             
-            mse[d, count] = (control[d].PC1 - restart[d].PC1)**2 + (control[d].PC2 - restart[d].PC2)**2
-            signal[d, count] += sum([new_romi[i+18].PC1**2 + new_romi[i+18].PC2**2 for i in range(d-L, d+L)])/(2*L+1)
+            mse[idx, count] = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
+            signal[idx, count] += sum([ROMI_data.ROMI1C.sel(leadlag=idx+18,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx+18,nruns=n)**2 for i in range(idx-L, idx+L)])/(2*L+1)
             
         count += 1
     
     return mse, signal
+
 
 
 ###############
@@ -573,7 +538,7 @@ def calculate_ci_signal(data, n):
 
     return lb,ub
 
-def calculate_ci_acc(data,n,df):
+def calculate_ci_acc(data,n):
 
     zstat = stats.t.ppf(1-0.025,n)
 
@@ -595,7 +560,7 @@ def calculate_ci_mse(data,n):
 
     return lb, ub
 
-def calculate_ci_rmse(data,n,df):
+def calculate_ci_rmse(data,n):
 
     c1,c2 = stats.chi2.ppf([0.025,1-0.025],n)
 
