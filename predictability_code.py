@@ -490,13 +490,14 @@ def calculate_bicor_rmse_initial(ROMI_data):
     return np.array(error_by_day)
 
 
-def signal_noise_ratio(ROMI_data, L=25):
+def signal_noise_ratio(ROMI_data, ROMI_data_ext, L=25):
     """
     Calculate signal and MSE for each forecast. Required recalculating ROMI for the control
     simulation since signal requires a longer prior window. Signal is calculated for the control
     simulation but should not be significantly different from the forecasts. 
 
     :param ROMI_data: xrDataset containing ROMI data for each forecast run. 
+    :param ROMI_data_ext: xrDataset containing extended ROMI data for each control run period (with a 25-day buffer). 
     :param L: window used for calculating signal. Using 51-day window because of previous literature. 
     If this changes, will need to change hardcoded indexing below. 
 
@@ -516,7 +517,7 @@ def signal_noise_ratio(ROMI_data, L=25):
         for idx in range(len_run):
             
             mse[idx, count] = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
-            signal[idx, count] += sum([ROMI_data.ROMI1C.sel(leadlag=idx+18,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx+18,nruns=n)**2 for i in range(idx-L, idx+L)])/(2*L+1)
+            signal[idx, count] += sum([ROMI_data_ext.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data_ext.ROMI2C.sel(leadlag=idx,nruns=n)**2 for i in range(idx-L, idx+L)])/(2*L+1)
             
         count += 1
     
