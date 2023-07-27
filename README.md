@@ -18,6 +18,8 @@ Contents:
 
 Modifications to the SPCAM source code (original found here: https://wiki.ucar.edu/pages/viewpage.action?pageId=205489281) are not included, but can be shared upon request. 
 
-Zenodo repository here: <a href="https://zenodo.org/badge/latestdoi/670349005"><img src="https://zenodo.org/badge/670349005.svg" alt="DOI"></a>
+Zenodo repository here: 
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8190699.svg)](https://doi.org/10.5281/zenodo.8190699)
 
 
