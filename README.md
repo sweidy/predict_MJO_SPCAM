@@ -1,6 +1,6 @@
 # predict_MJO_SPCAM
 
-Includes data and code for analyzing SPCAM potential predictability experiment forecasts. For storage reasons, only MJO indices (ROMI) for each forecast are included, which are the only data needed for reproducing the figures in the paper. 
+Includes data and code for analyzing SPCAM potential predictability experiment forecasts. Should include all the data needed for reproducing the figures in the paper (but please email me if you find something missing!)
 
 Contents: 
 
