@@ -418,12 +418,12 @@ def calculate_bicor_rmse_target(ROMI_data, pcs_omi, threshold=1.14):
 
         for idx in range(len(lag)):
             # for calculating ACC
-            num = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
-            den1 = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
-            den2 = float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
+            num += float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
+            den1 += float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
+            den2 += float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
             
             # MSE
-            mse = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
+            mse += float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
 
             # load in proper data: [0,2,:,:] includes all info
             # also add to phase, amplitude, and both indices based on OMI
@@ -474,12 +474,12 @@ def calculate_bicor_rmse_initial(ROMI_data):
         for n in ROMI_data.nruns.values:
 
             # for calculating ACC
-            num = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
-            den1 = float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
-            den2 = float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
+            num += float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n) + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)*ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))
+            den1 += float(ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n)**2)
+            den2 += float(ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n)**2 + ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n)**2)
             
             # MSE
-            mse = float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
+            mse += float((ROMI_data.ROMI1C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI1F.sel(leadlag=idx,nruns=n))**2 + (ROMI_data.ROMI2C.sel(leadlag=idx,nruns=n) - ROMI_data.ROMI2F.sel(leadlag=idx,nruns=n))**2)
             
         error_by_day[idx,0] = num/(np.sqrt(den1)*np.sqrt(den2))
         error_by_day[idx,1] = np.sqrt(mse/n_forecasts) 
