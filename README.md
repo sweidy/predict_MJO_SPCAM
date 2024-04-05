@@ -20,6 +20,6 @@ Modifications to the SPCAM source code (original found here: https://wiki.ucar.e
 
 Zenodo repository here: 
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8190699.svg)](https://doi.org/10.5281/zenodo.8190699)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8190698.svg)](https://doi.org/10.5281/zenodo.8190698)
 
 
