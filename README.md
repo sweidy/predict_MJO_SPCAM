@@ -16,7 +16,7 @@ Contents:
     - PCs_twin_control_20yrs.txt: Principal components of the OMI (not real time) of the 20-year control run. Very similar to the
     ROMI, but does not have issues with tapering at the end of each forecast time series.
 
-Modifications to the SPCAM source code (original found here: https://wiki.ucar.edu/pages/viewpage.action?pageId=205489281) are not included, but can be shared upon request. 
+Modifications to the SPCAM source code (original found here: https://wiki.ucar.edu/pages/viewpage.action?pageId=205489281) can be found at this git repository: https://github.com/KuangLab-Harvard/CESM1-mods/tree/main/TwinCRM. 
 
 Zenodo repository here: 
 
